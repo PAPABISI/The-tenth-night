@@ -1,0 +1,6 @@
+@NightTen.Server_HostAddress = http://localhost:5234
+
+GET {{NightTen.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
