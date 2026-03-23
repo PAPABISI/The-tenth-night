@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 《第十夜》多人联机游戏后端原型
 
 《第十夜》是一个基于回合阶段推进、信息不对称博弈的多人对抗游戏原型。  
@@ -189,7 +188,7 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:5000/room/$roomId/state/111
 
 ---
 
-## 八、���续扩展方向
+## 八、续扩展方向
 
 - Lobby 生命周期完善（Join / Ready / Start）
 - WebSocket 实时事件推送
@@ -199,4 +198,3 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:5000/room/$roomId/state/111
 =======
 # The-tenth-night
 a game
->>>>>>> f4f6ac6c6b17a6115988b73d1662ba2127f15810
