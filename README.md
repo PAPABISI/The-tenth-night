@@ -1,195 +1,321 @@
-# 《第十夜》多人联机游戏后端原型
+# The Tenth Night — Multiplayer Game Server
 
-《第十夜》是一个基于回合阶段推进、信息不对称博弈的多人对抗游戏原型。  
-本仓库实现了服务端核心规则、阶段状态机与最小可用 API，可用于本地联调与 Unity 客户端接入。
-
----
-
-## 一、项目概览
-
-本项目采用 **Server-Authoritative（服务端权威）** 架构：
-
-- 服务端维护完整 `GameState` 真相
-- 客户端通过接口获取受权限约束的视图数据
-- 关键规则（卡牌、死亡、继承、胜负）全部在服务端执行
-
-项目当前重点是规则系统与服务端流程，不包含完整前端表现层。
+**The Tenth Night** (《第十夜》) is a server-authoritative backend prototype for a 6-player asymmetric
+hidden-role strategy game. Players belong to one of three factions (Guardian, Thief, Lovers) and
+interact through a card system across up to 10 rounds. This repository provides the full game-rule
+engine, a phase state machine, and a minimal REST API ready for integration with a Unity client.
 
 ---
 
-## 二、技术栈
+## Table of Contents
 
-- **语言**：C#
-- **运行时**：.NET 10
-- **后端框架**：ASP.NET Core Minimal API
-- **核心模块**：自定义规则引擎 + 状态机 + 卡牌策略系统
+1. [Project Overview](#1-project-overview)
+2. [Technology Stack](#2-technology-stack)
+3. [Directory Structure](#3-directory-structure)
+4. [Architecture & Design Patterns](#4-architecture--design-patterns)
+5. [Game Rules](#5-game-rules)
+6. [API Reference](#6-api-reference)
+7. [Quick Start](#7-quick-start)
+8. [Usage Examples](#8-usage-examples)
+9. [Related Repository](#9-related-repository)
 
-### 目录结构
+---
+
+## 1. Project Overview
+
+The server follows a **server-authoritative** model:
+
+- The server owns the single source of truth (`GameState`).
+- Clients receive only the information they are permitted to see (their own hand, HP, faction; never
+  another player's hidden data).
+- Every critical rule — card effects, death processing, treasure transfers, leadership inheritance,
+  and win-condition evaluation — runs exclusively on the server.
+
+The project is intentionally focused on the rule system and server flow; it does not include a
+front-end presentation layer.
+
+---
+
+## 2. Technology Stack
+
+| Concern | Choice |
+|---|---|
+| Language | C# |
+| Runtime | .NET 10 |
+| Backend framework | ASP.NET Core Minimal APIs |
+| HTTP package | `Microsoft.AspNetCore.OpenApi` |
+| Build tool | `dotnet` CLI |
+| Package manager | NuGet |
+| Persistence | In-memory only (`ConcurrentDictionary`) |
+
+---
+
+## 3. Directory Structure
 
 ```text
-Tenth/
-  Tenth.slnx
-  NightTen.Core/                # 游戏核心规则库
-    Models/
-      CoreDataStructures.cs     # 基础数据结构与枚举
-    Interfaces/
-      GameInterfaces.cs         # 核心接口与事件定义
-    Systems/
-      GameStateMachine.cs       # 阶段状态机
-      GameRuleEngine.cs         # 规则引擎
-      CardEffects.cs            # 卡牌效果策略实现
-      GameLoopRunner.cs         # 本地自动推演（可选）
-  NightTenServer/               # Web API 服务端
-    Program.cs
-    RoomStore.cs
-    Contracts.cs
-  NightTen.UnityClient/         # 客户端预留目录
+The-tenth-night/
+├── Tenth.slnx                        # Solution file (references both projects)
+├── README.md
+│
+├── NightTen.Core/                    # Class library — all game logic (no web dependency)
+│   ├── NightTen.Core.csproj
+│   ├── Models/
+│   │   └── CoreDataStructures.cs     # Enums, Player, Card, GameState, view projections
+│   ├── Interfaces/
+│   │   └── GameInterfaces.cs         # ICardEffect, IGameRuleEngine, IGameStateMachine, GameEvent hierarchy
+│   └── Systems/
+│       ├── GameStateMachine.cs       # Finite state machine managing phase transitions
+│       ├── GameRuleEngine.cs         # Core rule engine (~477 lines)
+│       ├── CardEffects.cs            # One strategy class per card type
+│       └── GameLoopRunner.cs         # Optional demo auto-play runner (local testing)
+│
+└── NightTen.Server/                  # ASP.NET Core web application
+    ├── NightTen.Server.csproj
+    ├── Program.cs                    # All Minimal API endpoint definitions
+    ├── RoomStore.cs                  # Thread-safe in-memory room registry
+    ├── Contracts.cs                  # Request record types (DTOs)
+    ├── NightTen.Server.http          # HTTP test file (VS Code REST Client / Rider)
+    ├── appsettings.json
+    ├── appsettings.Development.json
+    └── Properties/
+        └── launchSettings.json       # Launch profiles (HTTP :5234 / HTTPS :7161)
+```
+
+### Key files at a glance
+
+| File | Responsibility |
+|---|---|
+| `CoreDataStructures.cs` | Defines every enum (`GamePhase`, `Faction`, `PlayerRole`, `CardType`, `TreasureState`) and every data class (`Player`, `Card`, `GameState`, `GameResult`, `DeathRecord`). Also defines the two view projections used for information hiding (`PlayerSelfView`, `PlayerPublicView`). |
+| `GameInterfaces.cs` | Contracts that decouple the rule engine from card implementations (`ICardEffect`) and decouple the API from the engine (`IGameRuleEngine`, `IGameStateMachine`). Also contains the `GameEvent` discriminated union. |
+| `GameStateMachine.cs` | Manages the legal sequence of `GamePhase` values, fires `OnEnter`/`OnExit` lifecycle hooks asynchronously, and prevents concurrent transitions. |
+| `GameRuleEngine.cs` | The heart of the game: identity assignment, deck management, card interaction dispatch, dinner/night settlement, the death pipeline (treasure transfer → leadership inheritance → lover link), and victory evaluation. |
+| `CardEffects.cs` | Five concrete `ICardEffect` implementations: `GunShotEffect`, `PoisonEffect`, `AntidoteEffect`, `BandageEffect`, `BulletProofEffect`. |
+| `GameLoopRunner.cs` | A self-contained demo that wires up phase hooks and drives an automated game loop — useful for rule validation without a client. |
+| `Program.cs` | Eight Minimal API endpoints. Each endpoint resolves the room from `RoomStore`, delegates to `IGameRuleEngine` or `IGameStateMachine`, and returns JSON. |
+| `RoomStore.cs` | Wraps a `ConcurrentDictionary<Guid, RoomRuntime>` to provide thread-safe room creation and lookup. `RoomRuntime` bundles `GameState`, `GameStateMachine`, and `GameRuleEngine` together. |
+
+---
+
+## 4. Architecture & Design Patterns
+
+### Layer diagram
+
+```
+┌──────────────────────────────────┐
+│  ASP.NET Core Minimal API        │  NightTen.Server / Program.cs
+│  (HTTP routing, JSON serialize)  │
+└────────────────┬─────────────────┘
+                 │ calls
+┌────────────────▼─────────────────┐
+│  Room Management                 │  RoomStore / RoomRuntime
+└────────────────┬─────────────────┘
+                 │ owns
+┌────────────────▼─────────────────┐
+│  Game Rule Engine                │  GameRuleEngine  ◄──── IGameRuleEngine
+│  (all game logic lives here)     │
+└──────┬──────────────┬────────────┘
+       │ reads/writes │ dispatches card effects via
+┌──────▼──────┐  ┌────▼──────────────────────────┐
+│  GameState  │  │  ICardEffect strategy objects   │
+│  (the       │  │  GunShotEffect, PoisonEffect,   │
+│  truth)     │  │  AntidoteEffect, BandageEffect, │
+└──────┬──────┘  │  BulletProofEffect              │
+       │         └────────────────────────────────┘
+┌──────▼──────────────────────────┐
+│  GameStateMachine               │  manages phase transitions + lifecycle hooks
+└─────────────────────────────────┘
+```
+
+### Design patterns used
+
+| Pattern | Where | Why |
+|---|---|---|
+| **Strategy** | `ICardEffect` / `CardEffects.cs` | Each card type is an independent class; adding a new card requires no change to the rule engine. |
+| **State Machine** | `GameStateMachine` | Encodes the legal phase sequence and prevents invalid transitions. Async hooks decouple phase entry/exit logic from the engine. |
+| **Information Hiding (Projection)** | `Player.ToSelfView()` / `Player.ToPublicView()` | Ensures the API never leaks a player's faction, hand, or poison status to other clients. |
+| **Repository** | `RoomStore` | Centralises room lifecycle management; the API layer never touches raw state. |
+| **Dependency Injection** | `builder.Services.AddSingleton<RoomStore>()` | `RoomStore` is injected into every endpoint via the ASP.NET Core DI container. |
+
+---
+
+## 5. Game Rules
+
+### Factions (6 players total)
+
+| Faction | Count | Role split |
+|---|---|---|
+| Guardian | 2–3 | 1 Leader + rest Members |
+| Thief | 2 | 1 Leader + 1 Member |
+| Lovers | 2 | (no role distinction) |
+
+### Phase flow (per round)
+
+```
+Initialization ──► DayExploration ──► DinnerPhase ──► NightPhase ──► RoundSettlement
+                                                                             │
+                                                                    (repeat up to 10 rounds
+                                                                     or until win condition)
+                                                                             │
+                                                                         GameOver
+```
+
+| Phase | What happens |
+|---|---|
+| **Initialization** | Identities assigned; initial hands dealt (4 cards per player). |
+| **DayExploration** | Players draw one card from a Red or Blue chest; they may play cards (GunShot, Poison, Bandage, BulletProof) on themselves or others. |
+| **DinnerPhase** | Accumulated poison stacks resolve into HP damage. The Guardian Leader may use the once-per-game faction-inspection ability. |
+| **NightPhase** | Each Thief submits a steal intent; the engine resolves treasure transfer to the spawn point or a thief. |
+| **RoundSettlement** | Win conditions are evaluated. If no winner, the round counter increments and play continues. |
+| **GameOver** | A `GameResult` is attached to `GameState`; further phase advances are rejected. |
+
+### Cards
+
+| Card | Usable phase | Effect |
+|---|---|---|
+| **GunShot** | DayExploration | Instant lethal damage. Cancelled if target has BulletProof buff. |
+| **Poison** | DayExploration | Adds a hidden poison stack; resolved at DinnerPhase. |
+| **Antidote** | DinnerPhase | Removes one poison stack and restores HP. |
+| **Bandage** | DayExploration or DinnerPhase | Restores 1 HP. |
+| **BulletProof** | DayExploration | Grants a one-shot GunShot immunity buff. |
+
+Cards are drawn from two weighted chests (Red / Blue) via `DrawCardFromChest`.
+
+### Death pipeline
+
+When a player dies the rule engine runs these steps in order:
+
+1. Remove from `AlivePlayers`; mark corpse as inspectable.
+2. Transfer treasure — to the killer if appropriate, otherwise back to spawn point.
+3. Leadership inheritance — if the victim was a Leader, the next Member in the same faction is
+   promoted.
+4. Lover link — if either Lover dies, the other Lover also dies (processed recursively through the
+   same pipeline).
+5. Append a `DeathRecord` to `RoundDeathLog`.
+
+### Victory conditions (evaluated in order)
+
+1. **Immediate faction elimination** — if all Guardians or all Thieves are dead, the opposing
+   faction wins immediately.
+2. **Lovers independent win** — if both Lovers are alive and hold the treasure at round end, they
+   win regardless of other factions.
+3. **Treasure control at max rounds** — after round 10, whichever faction holds (or last held) the
+   treasure wins.
+
+---
+
+## 6. API Reference
+
+The server binds to all interfaces on port 5000 (`http://0.0.0.0:5000`); access it via `http://localhost:5000` from the same machine.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/room/create` | Create a new game room. Returns `{ roomId }`. |
+| `POST` | `/room/{roomId}/join` | Join a room (simplified lobby). Returns `{ roomId, playerId, displayName }`. |
+| `POST` | `/room/{roomId}/start` | Start the game with a provided list of player IDs. Runs Initialization phase. |
+| `POST` | `/room/{roomId}/phase/next` | Advance to the next phase; triggers phase settlement (poison, night theft, victory check). |
+| `POST` | `/room/{roomId}/action/draw` | Draw one card from Red (`isRedChest: true`) or Blue chest. DayExploration only. |
+| `POST` | `/room/{roomId}/action/use-card` | Play a card (`cardId`) from `userId` onto `targetId`. |
+| `POST` | `/room/{roomId}/action/night-intent` | Register whether a Thief intends to steal (`intendToSteal: bool`). |
+| `GET` | `/room/{roomId}/state/{playerId}` | Return the permission-filtered view for `playerId` (own hand + public info for all others). |
+
+### Request bodies
+
+```jsonc
+// POST /room/{id}/start
+{ "playerIds": ["<guid>", "<guid>", ...] }   // exactly 6 player GUIDs
+
+// POST /room/{id}/action/use-card
+{ "userId": "<guid>", "targetId": "<guid>", "cardId": "<guid>" }
+
+// POST /room/{id}/action/draw
+{ "userId": "<guid>", "isRedChest": true }
+
+// POST /room/{id}/action/night-intent
+{ "userId": "<guid>", "intendToSteal": true }
 ```
 
 ---
 
-## 三、核心架构设计
+## 7. Quick Start
 
-### 1）状态机与规则引擎分层
+### Prerequisites
 
-- `GameStateMachine`：负责阶段切换与生命周期钩子（OnEnter / OnExit）
-- `GameRuleEngine`：负责具体规则执行与状态变更
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 
-通过分��将“何时切换”与“切换后做什么”分离，降低耦合，便于扩展与维护。
-
-### 2）卡牌策略模式
-
-每张卡牌实现统一接口 `ICardEffect`，由规则引擎在运行时选择策略执行：
-
-- GunShot（枪杀）
-- Poison（毒杀）
-- Antidote（解药）
-- Bandage（绷带）
-- BulletProof（防弹衣）
-
-新增卡牌时可通过新增策略类完成，减少对主流程代码影响。
-
-### 3）信息可见性控制
-
-- `ToSelfView()`：仅返回玩家本人可见信息（手牌、HP 等）
-- `ToPublicView()`：仅返回公共信息（存活状态等）
-
-用于保证阵营身份、毒源、隐式状态等敏感信息不会被错误广播。
-
----
-
-## 四、游戏规则（当前实现）
-
-### 1）阵营设定
-
-- **守卫（Guardian）**
-- **盗贼（Thief）**
-- **恋人（Lovers）**
-
-其中守卫与盗贼阵营包含 Leader / Member 职位差异。
-
-### 2）阶段流程
-
-每回合按以下阶段推进：
-
-1. **Initialization**：身份初始化与基础状态准备  
-2. **DayExploration**：探索与卡牌交互  
-3. **DinnerPhase**：毒药统一结算  
-4. **NightPhase**：盗贼提交行窃意向并结算宝物  
-5. **RoundSettlement**：回合收束与胜利判定  
-6. **GameOver**：游戏结束
-
-### 3）卡牌机制
-
-- **枪杀（GunShot）**  
-  白天使用，立即造成致命伤害；若目标有防弹衣则抵消一次。
-- **毒杀（Poison）**  
-  白天使用，作为暗牌叠加中毒层数，晚餐统一结算。
-- **解药（Antidote）**  
-  晚餐阶段可用，减少毒层并恢复生命。
-- **绷带（Bandage）**  
-  恢复 1 点生命。
-- **防弹衣（BulletProof）**  
-  白天使用，提供一次枪杀免疫。
-
-### 4）死亡与继承
-
-- 死亡统一进入服务端死亡管线处理
-- 支持宝物转移/归位逻辑
-- 支持阵营内上位继承
-- 支持恋人共生联动规则
-
-### 5）胜利条件
-
-- 守卫或盗贼可通过“肃清对方阵营”触发即时胜利
-- 到达最大回合后按宝物归属判定终局胜负
-- 恋人满足特定条件时可触发独立胜利优先级
-
----
-
-## 五、API 概览（最小可用）
-
-- `POST /room/create`：创建房间
-- `POST /room/{roomId}/join`：加入房间（当前为简化流程）
-- `POST /room/{roomId}/start`：启动对局
-- `POST /room/{roomId}/phase/next`：推进阶段
-- `POST /room/{roomId}/action/draw`：抽卡
-- `POST /room/{roomId}/action/use-card`：使用卡牌
-- `POST /room/{roomId}/action/night-intent`：夜晚意图提交
-- `GET /room/{roomId}/state/{playerId}`：获取指定玩家视图
-
----
-
-## 六、快速启动
-
-### 1）构建
+### Build
 
 ```bash
-dotnet build .\Tenth.slnx
+dotnet build Tenth.slnx
 ```
 
-### 2）运行服务端
+### Run the server
 
 ```bash
-cd .\NightTenServer
+cd NightTen.Server
 dotnet run
+# Server starts at http://localhost:5000
 ```
 
 ---
 
-## 七、PowerShell 调用示例
+## 8. Usage Examples
 
-### 1）创建房间
+### PowerShell
 
 ```powershell
+# 1. Create a room
 $create = Invoke-RestMethod -Method Post -Uri "http://localhost:5000/room/create"
 $roomId = $create.roomId
-```
 
-### 2）开始游戏
-
-```powershell
+# 2. Start the game with six players
 $body = @{
-  playerIds = @(
-    "11111111-1111-1111-1111-111111111111",
-    "22222222-2222-2222-2222-222222222222",
-    "33333333-3333-3333-3333-333333333333",
-    "44444444-4444-4444-4444-444444444444",
-    "55555555-5555-5555-5555-555555555555",
-    "66666666-6666-6666-6666-666666666666"
-  )
+    playerIds = @(
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "33333333-3333-3333-3333-333333333333",
+        "44444444-4444-4444-4444-444444444444",
+        "55555555-5555-5555-5555-555555555555",
+        "66666666-6666-6666-6666-666666666666"
+    )
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post -Uri "http://localhost:5000/room/$roomId/start" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post `
+    -Uri "http://localhost:5000/room/$roomId/start" `
+    -ContentType "application/json" `
+    -Body $body
+
+# 3. Advance phase (e.g. Initialization -> DayExploration)
+Invoke-RestMethod -Method Post -Uri "http://localhost:5000/room/$roomId/phase/next"
+
+# 4. Draw a card (Red chest)
+$draw = @{ userId = "11111111-1111-1111-1111-111111111111"; isRedChest = $true } | ConvertTo-Json
+Invoke-RestMethod -Method Post `
+    -Uri "http://localhost:5000/room/$roomId/action/draw" `
+    -ContentType "application/json" `
+    -Body $draw
+
+# 5. Query a player's view
+Invoke-RestMethod -Method Get `
+    -Uri "http://localhost:5000/room/$roomId/state/11111111-1111-1111-1111-111111111111"
 ```
 
-### 3）查询玩家状态
+### curl
 
-```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:5000/room/$roomId/state/11111111-1111-1111-1111-111111111111"
+```bash
+# Create room
+curl -s -X POST http://localhost:5000/room/create
+
+# Start game
+curl -s -X POST http://localhost:5000/room/<roomId>/start \
+     -H "Content-Type: application/json" \
+     -d '{"playerIds":["11111111-1111-1111-1111-111111111111","22222222-2222-2222-2222-222222222222","33333333-3333-3333-3333-333333333333","44444444-4444-4444-4444-444444444444","55555555-5555-5555-5555-555555555555","66666666-6666-6666-6666-666666666666"]}'
+
+# Get player state
+curl -s http://localhost:5000/room/<roomId>/state/11111111-1111-1111-1111-111111111111
 ```
 
 ---
-## 八、相关仓库
 
-https://github.com/PAPABISI/the-tenth-night-unity.git
+## 9. Related Repository
+
+Unity client: <https://github.com/PAPABISI/the-tenth-night-unity.git>
