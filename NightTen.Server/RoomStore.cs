@@ -9,6 +9,8 @@ public class RoomRuntime
     public GameState State { get; init; } = new();
     public IGameStateMachine Fsm { get; init; } = new GameStateMachine();
     public IGameRuleEngine RuleEngine { get; init; } = new GameRuleEngine();
+    public object SyncRoot { get; } = new();
+    public HashSet<Guid> JoinedPlayerIds { get; } = new();
 }
 
 public class RoomStore

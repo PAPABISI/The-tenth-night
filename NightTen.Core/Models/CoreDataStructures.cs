@@ -85,6 +85,9 @@ namespace NightTen.Core
         public bool HoldsTreasure { get; set; } = false;
         public bool HasInspectableCorpse { get; set; } = false;
         public bool HasDrawnCardThisRound { get; set; } = false;
+        public bool HasPosition { get; set; } = false;
+        public float PositionX { get; set; } = 0f;
+        public float PositionY { get; set; } = 0f;
 
         public PlayerSelfView ToSelfView(GamePhase currentPhase) => new()
         {
@@ -97,7 +100,10 @@ namespace NightTen.Core
             HasBulletProofBuff = HasBulletProofBuff,
             Hand = Hand.ConvertAll(c => c.ToClientView()),
             IsAlive = IsAlive,
-            HoldsTreasure = HoldsTreasure
+            HoldsTreasure = HoldsTreasure,
+            HasPosition = HasPosition,
+            X = PositionX,
+            Y = PositionY
         };
 
         public PlayerPublicView ToPublicView() => new()
@@ -105,7 +111,10 @@ namespace NightTen.Core
             PlayerId = PlayerId,
             DisplayName = DisplayName,
             IsAlive = IsAlive,
-            HasInspectableCorpse = HasInspectableCorpse
+            HasInspectableCorpse = HasInspectableCorpse,
+            HasPosition = HasPosition,
+            X = PositionX,
+            Y = PositionY
         };
     }
 
@@ -121,6 +130,9 @@ namespace NightTen.Core
         public List<CardClientView> Hand { get; init; } = new();
         public bool IsAlive { get; init; }
         public bool HoldsTreasure { get; init; }
+        public bool HasPosition { get; init; }
+        public float X { get; init; }
+        public float Y { get; init; }
     }
 
     public record PlayerPublicView
@@ -129,6 +141,9 @@ namespace NightTen.Core
         public string DisplayName { get; init; } = string.Empty;
         public bool IsAlive { get; init; }
         public bool HasInspectableCorpse { get; init; }
+        public bool HasPosition { get; init; }
+        public float X { get; init; }
+        public float Y { get; init; }
     }
 
     public class GameState

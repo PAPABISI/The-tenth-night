@@ -13,6 +13,8 @@ namespace NightTen.Core
             if (playerIds == null || playerIds.Count < 4)
                 throw new ArgumentException("[Engine] 玩家人数不足，至少需要4人。");
 
+            var knownNames = state.AllPlayers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DisplayName);
+
             var shuffled = new List<Guid>(playerIds);
             int n = shuffled.Count;
             while (n > 1)
@@ -34,23 +36,26 @@ namespace NightTen.Core
             int index = 0;
 
             for (int i = 0; i < loversCount; i++)
-                CreateAndRegisterPlayer(shuffled[index++], Faction.Lovers, PlayerRole.Member, state);
+                CreateAndRegisterPlayer(shuffled[index++], Faction.Lovers, PlayerRole.Member, state, knownNames);
 
             for (int i = 0; i < guardianCount; i++)
-                CreateAndRegisterPlayer(shuffled[index++], Faction.Guardian, i == 0 ? PlayerRole.Leader : PlayerRole.Member, state);
+                CreateAndRegisterPlayer(shuffled[index++], Faction.Guardian, i == 0 ? PlayerRole.Leader : PlayerRole.Member, state, knownNames);
 
             for (int i = 0; i < thiefCount; i++)
-                CreateAndRegisterPlayer(shuffled[index++], Faction.Thief, i == 0 ? PlayerRole.Leader : PlayerRole.Member, state);
+                CreateAndRegisterPlayer(shuffled[index++], Faction.Thief, i == 0 ? PlayerRole.Leader : PlayerRole.Member, state, knownNames);
         }
 
-        private void CreateAndRegisterPlayer(Guid id, Faction faction, PlayerRole role, GameState state)
+        private void CreateAndRegisterPlayer(Guid id, Faction faction, PlayerRole role, GameState state, Dictionary<Guid, string> knownNames)
         {
             int hp = role == PlayerRole.Leader ? 4 : 3;
+            var displayName = knownNames.TryGetValue(id, out var name) && !string.IsNullOrWhiteSpace(name)
+                ? name
+                : $"Player_{id.ToString()[..4]}";
 
             var p = new Player
             {
                 PlayerId = id,
-                DisplayName = $"Player_{id.ToString()[..4]}",
+                DisplayName = displayName,
                 Faction = faction,
                 Role = role,
                 MaxHp = hp,
@@ -141,6 +146,16 @@ namespace NightTen.Core
             player.Hand.Add(card);
             player.HasDrawnCardThisRound = true;
             return card;
+        }
+
+        public void UpdatePlayerPosition(Guid playerId, float x, float y, GameState state)
+        {
+            if (!state.AllPlayers.TryGetValue(playerId, out var player) || !player.IsAlive)
+                return;
+
+            player.HasPosition = true;
+            player.PositionX = x;
+            player.PositionY = y;
         }
 
         private CardType GenerateCardFromPool(bool isRedChest)
@@ -245,7 +260,7 @@ namespace NightTen.Core
 
             if (inspector.Faction != Faction.Guardian || inspector.Role != PlayerRole.Leader) return null;
             if (state.GuardianLeaderInspectionUsed) return null;
-            if (!target.IsAlive && !target.HasInspectableCorpse) return null;
+            if (target.IsAlive || !target.HasInspectableCorpse) return null;
 
             state.GuardianLeaderInspectionUsed = true;
 
@@ -313,8 +328,14 @@ namespace NightTen.Core
         }
 
         public List<GameEvent> ProcessPlayerDeath(Guid victimId, CardType causeOfDeath, Guid? killerId, GameState state)
+            => ProcessPlayerDeath(victimId, causeOfDeath, killerId, state, new HashSet<Guid>());
+
+        private List<GameEvent> ProcessPlayerDeath(Guid victimId, CardType causeOfDeath, Guid? killerId, GameState state, HashSet<Guid> chainVisited)
         {
             var events = new List<GameEvent>();
+
+            if (!chainVisited.Add(victimId))
+                return events;
 
             if (!state.AllPlayers.TryGetValue(victimId, out var victim) || !victim.IsAlive)
                 return events;
@@ -376,7 +397,7 @@ namespace NightTen.Core
             {
                 var survivingLover = state.AlivePlayers.FirstOrDefault(p => p.Faction == Faction.Lovers);
                 if (survivingLover != null)
-                    events.AddRange(ProcessPlayerDeath(survivingLover.PlayerId, causeOfDeath, null, state));
+                    events.AddRange(ProcessPlayerDeath(survivingLover.PlayerId, causeOfDeath, null, state, chainVisited));
             }
 
             return events;

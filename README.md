@@ -136,6 +136,7 @@ Tenth/
 - `POST /room/{roomId}/action/draw`：抽卡
 - `POST /room/{roomId}/action/use-card`：使用卡牌
 - `POST /room/{roomId}/action/night-intent`：夜晚意图提交
+- `POST /room/{roomId}/action/move`：上报玩家2D位置（x,y）
 - `GET /room/{roomId}/state/{playerId}`：获取指定玩家视图
 
 ---
@@ -151,9 +152,25 @@ dotnet build .\Tenth.slnx
 ### 2）运行服务端
 
 ```bash
-cd .\NightTenServer
+cd .\NightTen.Server
 dotnet run
 ```
+
+### 3）执行 MVP 联调冒烟脚本
+
+在另一个终端执行：
+
+```powershell
+.\scripts\smoke-mvp.ps1
+```
+
+可选参数：
+
+```powershell
+.\scripts\smoke-mvp.ps1 -BaseUrl "http://localhost:5000"
+```
+
+脚本将自动完成：建房、4 人入房、开局、状态拉取、阶段推进、一次出牌动作检查。
 
 ---
 

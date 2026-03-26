@@ -66,6 +66,7 @@ namespace NightTen.Core
         void InitializeRound(GameState state);
 
         Card? DrawCardFromChest(Guid playerId, bool isRedChest, GameState state);
+        void UpdatePlayerPosition(Guid playerId, float x, float y, GameState state);
         void DiscardCard(Guid playerId, Guid cardId, GameState state);
 
         List<GameEvent> ProcessCardInteraction(Guid userId, Guid? targetId, Guid cardId, GameState state);

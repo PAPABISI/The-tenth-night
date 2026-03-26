@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="NightTen.Core/NightTen.Core.csproj" />
   <Project Path="NightTen.Server/NightTen.Server.csproj" />
+  <Project Path="NightTen.Core.Tests/NightTen.Core.Tests.csproj" />
 </Solution>
